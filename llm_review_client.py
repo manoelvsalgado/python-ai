@@ -89,6 +89,32 @@ DEMO_MODE = os.getenv("DEMO_MODE", "false").strip().lower() in {"1", "true", "ye
 DEMO_MODE_FALLBACK = os.getenv("DEMO_MODE_FALLBACK", "true").strip().lower() in {"1", "true", "yes", "on"}
 
 client_openai = None
+FALLBACK_STATS = {
+    "used": False,
+    "quota_exceeded": False,
+    "messages": [],
+}
+
+
+def reset_fallback_stats():
+    FALLBACK_STATS["used"] = False
+    FALLBACK_STATS["quota_exceeded"] = False
+    FALLBACK_STATS["messages"] = []
+
+
+def get_fallback_stats():
+    return {
+        "used": FALLBACK_STATS["used"],
+        "quota_exceeded": FALLBACK_STATS["quota_exceeded"],
+        "messages": list(FALLBACK_STATS["messages"]),
+    }
+
+
+def register_fallback_event(message, quota_exceeded=False):
+    FALLBACK_STATS["used"] = True
+    if quota_exceeded:
+        FALLBACK_STATS["quota_exceeded"] = True
+    FALLBACK_STATS["messages"].append(message)
 
 
 def can_use_online_llm():
@@ -438,7 +464,9 @@ def parse_review_line_to_json(review_line):
         return demo_response
 
     if not can_use_online_llm():
-        print("[WARN] Configuracao online ausente/invalida. Usando DEMO_MODE fallback.")
+        warning_message = "Configuracao online ausente/invalida. Usando DEMO_MODE fallback."
+        register_fallback_event(warning_message, quota_exceeded=False)
+        print(f"[WARN] {warning_message}")
         demo_response = build_demo_json_response(review_line)
         print(demo_response)
         return demo_response
@@ -467,7 +495,16 @@ def parse_review_line_to_json(review_line):
         if not DEMO_MODE_FALLBACK:
             raise
 
-        print(f"[WARN] Falha no LLM online ({exc}). Usando DEMO_MODE fallback.")
+        error_text = str(exc)
+        quota_exceeded = (
+            "insufficient_quota" in error_text
+            or "quota" in error_text.lower()
+            or "error code: 429" in error_text.lower()
+            or "rate limit" in error_text.lower()
+        )
+        warning_message = f"Falha no LLM online ({exc}). Usando DEMO_MODE fallback."
+        register_fallback_event(warning_message, quota_exceeded=quota_exceeded)
+        print(f"[WARN] {warning_message}")
         demo_response = build_demo_json_response(review_line)
         print(demo_response)
         return demo_response

@@ -4,7 +4,12 @@ from collections import Counter
 
 import streamlit as st
 from review_analysis_pipeline import build_reviews_json, count_and_join_reviews
-from llm_review_client import get_runtime_mode_label, build_reviews_synthesis
+from llm_review_client import (
+    get_runtime_mode_label,
+    build_reviews_synthesis,
+    reset_fallback_stats,
+    get_fallback_stats,
+)
 
 # ── Página ────────────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -46,6 +51,7 @@ st.write(f"**{len(review_lines)} resenhas** encontradas no arquivo.")
 if st.button("🔍 Analisar Resenhas", type="primary"):
     progress = st.progress(0, text="Processando resenhas...")
     reviews_json = []
+    reset_fallback_stats()
 
     for i, line in enumerate(review_lines):
         result = build_reviews_json([line])
@@ -54,6 +60,7 @@ if st.button("🔍 Analisar Resenhas", type="primary"):
 
     progress.empty()
     st.session_state["reviews_json"] = reviews_json
+    st.session_state["fallback_stats"] = get_fallback_stats()
 
 # ── Exibir resultados (persiste mesmo após rerun do dropdown) ──────────────────
 if "reviews_json" in st.session_state:
@@ -61,6 +68,18 @@ if "reviews_json" in st.session_state:
     positives, negatives, neutrals, _ = count_and_join_reviews(reviews_json)
     language_counts = Counter(review.get("idioma", "Não identificado") for review in reviews_json)
     synthesis_payload = build_reviews_synthesis(reviews_json)
+    fallback_stats = st.session_state.get("fallback_stats", {})
+
+    if fallback_stats.get("quota_exceeded"):
+        st.warning(
+            "A cota do provedor online foi atingida durante a análise. "
+            "Parte dos resultados pode ter sido gerada em modo fallback local e pode não refletir o resultado ideal."
+        )
+    elif fallback_stats.get("used"):
+        st.info(
+            "O provedor online apresentou indisponibilidade em parte das requisições. "
+            "Alguns resultados foram gerados em modo fallback local."
+        )
 
     st.subheader("🧠 Síntese Geral")
     st.markdown(f"**Sentimento mais comum:** {synthesis_payload.get('sentimento_mais_comum', 'Neutra')}")
