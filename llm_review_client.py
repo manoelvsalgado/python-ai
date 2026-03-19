@@ -63,9 +63,9 @@ def load_local_env_file(env_file: str = ".env"):
 
 load_local_env_file()
 
-GEMMA_API_KEY = os.getenv("GEMMA_API_KEY", "lm-studio")
-GEMMA_BASE_URL = os.getenv("GEMMA_BASE_URL")
-GEMMA_MODEL = os.getenv("GEMMA_MODEL", "google/gemma-3-4b")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY") or os.getenv("GEMMA_API_KEY") or "lm-studio"
+OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL") or os.getenv("GEMMA_BASE_URL")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL") or os.getenv("GEMMA_MODEL") or "gpt-4o-mini"
 DEMO_MODE = os.getenv("DEMO_MODE", "false").strip().lower() in {"1", "true", "yes", "on"}
 DEMO_MODE_FALLBACK = os.getenv("DEMO_MODE_FALLBACK", "true").strip().lower() in {"1", "true", "yes", "on"}
 
@@ -73,13 +73,13 @@ client_openai = None
 
 
 def can_use_online_llm():
-    return (not DEMO_MODE) and OpenAI is not None and bool(GEMMA_BASE_URL)
+    return (not DEMO_MODE) and OpenAI is not None and bool(OPENAI_BASE_URL)
 
 
 def get_openai_client():
     global client_openai
     if client_openai is None and can_use_online_llm():
-        client_openai = OpenAI(base_url=GEMMA_BASE_URL, api_key=GEMMA_API_KEY)
+        client_openai = OpenAI(base_url=OPENAI_BASE_URL, api_key=OPENAI_API_KEY)
     return client_openai
 
 
@@ -260,7 +260,7 @@ def get_runtime_mode_label():
     if not can_use_online_llm():
         return "DEMO_MODE fallback (configuracao online ausente)"
 
-    return f"LLM online ({GEMMA_MODEL})"
+    return f"LLM online ({OPENAI_MODEL})"
 
 def parse_review_line_to_json(review_line):
     if DEMO_MODE:
@@ -276,7 +276,7 @@ def parse_review_line_to_json(review_line):
 
     try:
         llm_response = get_openai_client().chat.completions.create(
-            model=GEMMA_MODEL,
+            model=OPENAI_MODEL,
             messages=[
                 {"role":"system",
                 "content": SYSTEM_PROMPT},
