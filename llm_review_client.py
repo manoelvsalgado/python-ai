@@ -157,6 +157,11 @@ PORTUGUESE_HINT_WORDS = {
     "gostei", "amei", "recomendo", "funciona", "ruim", "excelente",
 }
 
+ENGLISH_HINT_WORDS = {
+    "app", "this", "very", "good", "bad", "love", "hate", "error", "not", "work",
+    "cool", "great", "amazing", "wonderful", "important",
+}
+
 
 def portuguese_hint_score(review_text):
     lowered = review_text.lower()
@@ -166,6 +171,12 @@ def portuguese_hint_score(review_text):
     return token_hits + accent_hits
 
 
+def english_hint_score(review_text):
+    lowered = review_text.lower()
+    tokens = {token.strip(".,!?;:()[]{}\"'") for token in lowered.split()}
+    return len(tokens.intersection(ENGLISH_HINT_WORDS))
+
+
 def detect_review_language(review_text):
     if not review_text.strip():
         return "Idioma indefinido"
@@ -173,6 +184,8 @@ def detect_review_language(review_text):
     # Textos muito curtos ou com poucos caracteres alfabéticos tendem a gerar falso positivo.
     alpha_count = sum(1 for char in review_text if char.isalpha())
     if alpha_count < 8:
+        if english_hint_score(review_text) >= 2:
+            return "Inglês"
         return "Idioma indefinido"
 
     hint_score = portuguese_hint_score(review_text)
@@ -195,15 +208,64 @@ def detect_review_language(review_text):
     second_prob = candidates[1].prob if len(candidates) > 1 else 0.0
     confidence_gap = top_prob - second_prob
 
-    # Se a confiança for baixa ou houver muita proximidade entre candidatos,
-    # classificamos como idioma indefinido.
+    # Regras específicas para português e inglês, mais tolerantes em textos curtos.
     if top_code == "pt" and top_prob >= 0.55 and hint_score >= 1:
         return "Português"
 
-    if top_prob < 0.90 or confidence_gap < 0.20:
+    if top_code == "en" and top_prob >= 0.70:
+        return "Inglês"
+
+    # Regra geral conservadora para outros idiomas.
+    if top_prob < 0.82 or confidence_gap < 0.10:
         return "Idioma indefinido"
 
     return LANGUAGE_LABELS.get(top_code, top_code)
+
+
+def classify_sentiment_scores(review_text):
+    text = review_text.lower()
+
+    positive_words = [
+        "good", "great", "excellent", "awesome", "love", "liked", "amazing", "best", "important",
+        "bom", "boa", "otimo", "ótimo", "excelente", "amei", "recomendo", "incrivel", "incrível",
+    ]
+    negative_words = [
+        "bad", "terrible", "awful", "hate", "worst", "bug", "broken", "slow", "crash", "error",
+        "lies", "worse", "issue", "problem", "not work", "does not work", "stuck",
+        "ruim", "pessimo", "péssimo", "odiei", "horrivel", "horrível", "travando", "erro", "não abre",
+    ]
+
+    positive_score = sum(1 for word in positive_words if word in text)
+    negative_score = sum(1 for word in negative_words if word in text)
+
+    # Termos críticos recebem peso maior para evitar falsos neutros.
+    strong_negative_words = ["lies", "error", "not work", "does not work", "stuck", "crash", "broken"]
+    negative_score += sum(1 for word in strong_negative_words if word in text)
+    return positive_score, negative_score
+
+
+def refine_sentiment(value, review_text):
+    sentiment_value = (value or "").strip().capitalize()
+    if sentiment_value not in {"Positiva", "Negativa", "Neutra"}:
+        sentiment_value = "Neutra"
+
+    positive_score, negative_score = classify_sentiment_scores(review_text)
+
+    # Evita excesso de "Neutra" quando há sinal claro em texto.
+    if sentiment_value == "Neutra":
+        if positive_score >= negative_score + 1 and positive_score > 0:
+            return "Positiva"
+        if negative_score >= positive_score + 1 and negative_score > 0:
+            return "Negativa"
+
+    return sentiment_value
+
+
+def normalize_language(value, review_text):
+    language_value = (value or "").strip()
+    if language_value and language_value != "Idioma indefinido":
+        return language_value
+    return detect_review_language(review_text)
 
 
 def normalize_review_payload(review_line, payload):
@@ -211,28 +273,16 @@ def normalize_review_payload(review_line, payload):
 
     normalized_payload = {
         "usuario": payload.get("usuario") or user_name,
-        "idioma": payload.get("idioma") or detect_review_language(review_text),
+        "idioma": normalize_language(payload.get("idioma"), review_text),
         "resenha_original": payload.get("resenha_original") or review_text,
         "resenha_pt": payload.get("resenha_pt") or review_text,
-        "avaliacao": payload.get("avaliacao") or "Neutra",
+        "avaliacao": refine_sentiment(payload.get("avaliacao"), review_text),
     }
     return normalized_payload
 
 
 def classify_sentiment_demo(review_text):
-    text = review_text.lower()
-
-    positive_words = [
-        "good", "great", "excellent", "awesome", "love", "liked", "amazing", "best",
-        "bom", "boa", "otimo", "ótimo", "excelente", "amei", "recomendo",
-    ]
-    negative_words = [
-        "bad", "terrible", "awful", "hate", "worst", "bug", "broken", "slow", "crash",
-        "ruim", "pessimo", "péssimo", "odiei", "horrivel", "horrível", "travando", "erro",
-    ]
-
-    positive_score = sum(1 for word in positive_words if word in text)
-    negative_score = sum(1 for word in negative_words if word in text)
+    positive_score, negative_score = classify_sentiment_scores(review_text)
 
     if positive_score > negative_score:
         return "Positiva"
