@@ -1,5 +1,7 @@
 import json
 import io
+from collections import Counter
+
 import streamlit as st
 from review_analysis_pipeline import build_reviews_json, count_and_join_reviews
 from llm_review_client import get_runtime_mode_label
@@ -57,6 +59,7 @@ if st.button("🔍 Analisar Resenhas", type="primary"):
 if "reviews_json" in st.session_state:
     reviews_json = st.session_state["reviews_json"]
     positives, negatives, neutrals, _ = count_and_join_reviews(reviews_json)
+    language_counts = Counter(review.get("idioma", "Não identificado") for review in reviews_json)
 
     # ── Métricas ──────────────────────────────────────────────────────────────
     st.subheader("📊 Resumo")
@@ -69,42 +72,69 @@ if "reviews_json" in st.session_state:
     try:
         import matplotlib.pyplot as plt
 
-        labels = []
-        sizes = []
-        colors = []
-        color_map = {"Positivas": "#4CAF50", "Negativas": "#F44336", "Neutras": "#9E9E9E"}
+        sentiment_col, language_col = st.columns(2)
 
-        for label, count in [("Positivas", positives), ("Negativas", negatives), ("Neutras", neutrals)]:
-            if count > 0:
-                labels.append(f"{label} ({count})")
-                sizes.append(count)
-                colors.append(color_map[label])
+        with sentiment_col:
+            labels = []
+            sizes = []
+            colors = []
+            color_map = {"Positivas": "#4CAF50", "Negativas": "#F44336", "Neutras": "#9E9E9E"}
 
-        if sizes:
-            fig, ax = plt.subplots(figsize=(4, 4))
-            ax.pie(sizes, labels=labels, colors=colors, autopct="%1.0f%%", startangle=90)
-            ax.set_title("Distribuição de Sentimentos")
-            st.pyplot(fig)
+            for label, count in [("Positivas", positives), ("Negativas", negatives), ("Neutras", neutrals)]:
+                if count > 0:
+                    labels.append(f"{label} ({count})")
+                    sizes.append(count)
+                    colors.append(color_map[label])
+
+            if sizes:
+                fig, ax = plt.subplots(figsize=(4, 4))
+                ax.pie(sizes, labels=labels, colors=colors, autopct="%1.0f%%", startangle=90)
+                ax.set_title("Distribuição de Sentimentos")
+                st.pyplot(fig)
+
+        with language_col:
+            language_labels = []
+            language_sizes = []
+
+            for language, count in sorted(language_counts.items(), key=lambda item: (-item[1], item[0])):
+                language_labels.append(f"{language} ({count})")
+                language_sizes.append(count)
+
+            if language_sizes:
+                fig, ax = plt.subplots(figsize=(4, 4))
+                ax.pie(language_sizes, labels=language_labels, autopct="%1.0f%%", startangle=90)
+                ax.set_title("Distribuição por Idioma")
+                st.pyplot(fig)
     except ModuleNotFoundError:
         pass  # matplotlib opcional
 
     # ── Tabela de resultados ──────────────────────────────────────────────────
     st.subheader("📋 Resenhas Analisadas")
 
-    sentiment_filter = st.selectbox(
-        "Filtrar por sentimento",
-        ["Todas", "Positiva", "Negativa", "Neutra"],
-    )
+    filter_col_1, filter_col_2 = st.columns(2)
+    with filter_col_1:
+        sentiment_filter = st.selectbox(
+            "Filtrar por sentimento",
+            ["Todas", "Positiva", "Negativa", "Neutra"],
+        )
+    with filter_col_2:
+        language_filter = st.selectbox(
+            "Filtrar por idioma",
+            ["Todos"] + sorted(language_counts.keys()),
+        )
 
     filtered = reviews_json
     if sentiment_filter != "Todas":
         filtered = [r for r in reviews_json if r.get("avaliacao") == sentiment_filter]
+    if language_filter != "Todos":
+        filtered = [r for r in filtered if r.get("idioma", "Não identificado") == language_filter]
 
     for review in filtered:
         sentiment = review.get("avaliacao", "Neutra")
         icon = {"Positiva": "✅", "Negativa": "❌", "Neutra": "➖"}.get(sentiment, "➖")
 
-        with st.expander(f"{icon} {review.get('usuario', 'Usuário')} — {sentiment}"):
+        with st.expander(f"{icon} {review.get('usuario', 'Usuário')} — {sentiment} — {review.get('idioma', 'Não identificado')}"):
+            st.markdown(f"**Idioma:** {review.get('idioma', 'Não identificado')}")
             st.markdown(f"**Original:** {review.get('resenha_original', '')}")
             st.markdown(f"**Tradução (PT):** {review.get('resenha_pt', '')}")
 
